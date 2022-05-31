@@ -1,143 +1,74 @@
-module Calendar exposing (Calendar, Selection(..), Status(..), advance, calendar, extendSelection, retreat)
+module Calendar exposing
+    ( calendar
+    , next
+    , previous
+    )
 
 import Date exposing (Date, Unit(..))
-import Html exposing (Html, div)
-import Html.Attributes exposing (style)
+import Html exposing (Html)
+import Html.Attributes
 import Time exposing (Month(..), Weekday(..))
-import Two exposing (Two)
 
 
-type Selection
-    = None
-    | Single Date
-    | Range (Two Date)
-
-
-type Status
-    = NotSelected
-    | Selected
-    | InRange
-    | StartRange
-    | EndRange
-
-
-type alias Calendar msg =
-    { page : ( Month, Int )
-    , selection : Selection
-    , viewWeekday : Weekday -> Html msg
-    , viewDate : { date : Date, status : Status, inMonth : Bool } -> Html msg
-    }
-
-
-calendar : List (Html.Attribute msg) -> Calendar msg -> Html msg
-calendar attrs model =
+calendar :
+    List (Html.Attribute msg)
+    ->
+        { page : ( Month, Int )
+        , viewHeader : Weekday -> Html msg
+        , viewDate : { date : Date, inMonth : Bool } -> Html msg
+        }
+    -> Html msg
+calendar attrs { page, viewHeader, viewDate } =
     let
-        { page, selection, viewWeekday, viewDate } =
-            model
+        first =
+            firstOnPage page
 
-        ( month, year ) =
-            page
+        last =
+            firstOnPage (next page)
 
-        monthStart =
-            Date.fromCalendarDate year month 1
+        headers =
+            List.map viewHeader [ Mon, Tue, Wed, Thu, Fri, Sat, Sun ]
 
-        monthEnd =
-            Date.fromCalendarDate year month 31
+        underflow =
+            List.range 1 (Date.weekdayNumber first - 1)
+                |> List.reverse
+                |> List.map (\n -> Date.add Days -n first)
+                |> List.map (\date -> viewDate { date = date, inMonth = False })
 
-        range =
-            Date.range Date.Day 1 monthStart monthEnd
+        month =
+            Date.range Date.Day 1 first last
+                |> List.map (\date -> viewDate { date = date, inMonth = True })
 
-        before =
-            List.head range
-                |> Maybe.map
-                    (\firstDate ->
-                        List.range 1 (Date.weekdayNumber firstDate - 1)
-                            |> List.map (\n -> Date.add Days -n firstDate)
-                            |> List.reverse
-                    )
-                |> Maybe.withDefault []
-
-        after =
-            last range
-                |> Maybe.map
-                    (\lastDate ->
-                        List.range 1 (7 * 6 - List.length (before ++ range))
-                            |> List.map (\n -> Date.add Days n lastDate)
-                    )
-                |> Maybe.withDefault []
+        overflow =
+            List.range 0 (7 * 6 - List.length underflow - List.length month - 1)
+                |> List.map (\n -> Date.add Days n last)
+                |> List.map (\date -> viewDate { date = date, inMonth = False })
     in
-    div (style "display" "grid" :: style "grid-template-columns" "repeat(7, 1fr)" :: style "grid-template-rows" "repeat(7, 1fr)" :: attrs) <|
-        (viewDayHeaders viewWeekday
-            ++ List.map (\date -> viewDate { date = date, inMonth = False, status = status selection date }) before
-            ++ List.map (\date -> viewDate { date = date, inMonth = True, status = status selection date }) range
-            ++ List.map (\date -> viewDate { date = date, inMonth = False, status = status selection date }) after
+    grid attrs <|
+        headers
+            ++ underflow
+            ++ month
+            ++ overflow
+
+
+grid : List (Html.Attribute msg) -> List (Html msg) -> Html msg
+grid attrs children =
+    Html.div
+        (Html.Attributes.style "display" "grid"
+            :: Html.Attributes.style "grid-template-columns" "repeat(7, 1fr)"
+            :: Html.Attributes.style "grid-template-rows" "repeat(7, 1fr)"
+            :: attrs
         )
+        children
 
 
-last : List a -> Maybe a
-last xs =
-    case xs of
-        [ x ] ->
-            Just x
-
-        _ :: tail ->
-            last tail
-
-        [] ->
-            Nothing
+firstOnPage : ( Month, Int ) -> Date
+firstOnPage ( month, year ) =
+    Date.fromCalendarDate year month 1
 
 
-days : List Weekday
-days =
-    [ Mon, Tue, Wed, Thu, Fri, Sat, Sun ]
-
-
-viewDayHeaders : (Weekday -> Html msg) -> List (Html msg)
-viewDayHeaders toString =
-    days |> List.map (\day -> toString day)
-
-
-status selection date =
-    case selection of
-        None ->
-            NotSelected
-
-        Single x ->
-            if x == date then
-                Selected
-
-            else
-                NotSelected
-
-        Range dates ->
-            if inRange dates date then
-                let
-                    min =
-                        Two.extract Date.min dates
-
-                    max =
-                        Two.extract Date.max dates
-                in
-                if date == max then
-                    EndRange
-
-                else if date == min then
-                    StartRange
-
-                else
-                    InRange
-
-            else
-                NotSelected
-
-
-inRange : Two Date -> Date -> Bool
-inRange dates date =
-    Two.check Date.isBetween dates date
-
-
-advance : ( Month, Int ) -> ( Month, Int )
-advance ( month, year ) =
+next : ( Month, Int ) -> ( Month, Int )
+next ( month, year ) =
     case month of
         Jan ->
             ( Feb, year )
@@ -176,8 +107,8 @@ advance ( month, year ) =
             ( Jan, year + 1 )
 
 
-retreat : ( Month, Int ) -> ( Month, Int )
-retreat ( month, year ) =
+previous : ( Month, Int ) -> ( Month, Int )
+previous ( month, year ) =
     case month of
         Jan ->
             ( Dec, year - 1 )
@@ -214,15 +145,3 @@ retreat ( month, year ) =
 
         Dec ->
             ( Nov, year )
-
-
-extendSelection selection d =
-    case selection of
-        None ->
-            Single d
-
-        Single date ->
-            Range (Two.two date d)
-
-        Range range ->
-            Range (Two.replace Date.max range d)
